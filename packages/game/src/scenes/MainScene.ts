@@ -34,6 +34,8 @@ export class MainScene extends Phaser.Scene {
   private usernameInput: HTMLInputElement | null = null;
   private playerInitialized: boolean = false;
   private inputFocused: boolean = false;
+  private connectionAttempts: number = 0;
+  private maxConnectionAttempts: number = 5;
 
   // Snapshot interpolation
   private SI: SnapshotInterpolation;
@@ -422,8 +424,21 @@ export class MainScene extends Phaser.Scene {
   }
 
   private connectToServer(): void {
-    // Connect to the geckos.io server
-    this.channel = geckos({ port: 3001 });
+    // Get the server URL based on the current hostname
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.hostname;
+    const port =
+      process.env.NODE_ENV === "production" ? window.location.port : "3001";
+
+    // Connect to the geckos.io server with WebRTC configuration
+    this.channel = geckos({
+      url: `${protocol}//${host}${port ? ":" + port : ""}`,
+      port: parseInt(port || "3001"),
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    });
 
     // Handle connection
     this.channel.onConnect((error: any) => {
@@ -434,8 +449,24 @@ export class MainScene extends Phaser.Scene {
             "Connection error - Trying to reconnect...";
           this.connectionStatusElement.style.color = "#ff0000";
         }
+
+        // Retry connection with exponential backoff
+        this.connectionAttempts++;
+        if (this.connectionAttempts < this.maxConnectionAttempts) {
+          const delay = Math.min(
+            1000 * Math.pow(2, this.connectionAttempts),
+            10000
+          );
+          console.log(
+            `Retrying connection in ${delay}ms (attempt ${this.connectionAttempts}/${this.maxConnectionAttempts})`
+          );
+          setTimeout(() => this.connectToServer(), delay);
+        }
         return;
       }
+
+      // Reset connection attempts on successful connection
+      this.connectionAttempts = 0;
 
       this.playerId = this.channel?.id || "";
 
@@ -457,6 +488,13 @@ export class MainScene extends Phaser.Scene {
           "Disconnected - Trying to reconnect...";
         this.connectionStatusElement.style.color = "#ff0000";
       }
+
+      // Try to reconnect after a delay
+      setTimeout(() => {
+        if (this.connectionAttempts < this.maxConnectionAttempts) {
+          this.connectToServer();
+        }
+      }, 3000);
     });
 
     // Handle messages from the server

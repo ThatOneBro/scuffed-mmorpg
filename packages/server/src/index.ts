@@ -8,12 +8,27 @@ import {
 } from "@scuffed-mmorpg/common";
 import express from "express";
 import http from "http";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// Get the directory name for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
 
-// Create a geckos.io server
-const io: GeckosServer = geckos();
+// Create a geckos.io server with explicit port range for UDP
+const io: GeckosServer = geckos({
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ],
+  portRange: {
+    min: 10000,
+    max: 10100,
+  },
+});
 
 // Attach to the http server
 io.addServer(server);
@@ -33,6 +48,10 @@ const channels: Map<string, ServerChannel> = new Map();
 const TICK_RATE = 20; // Send updates 20 times per second
 let tick = 0;
 let gameLoopInterval: NodeJS.Timeout | null = null;
+
+// Serve static files from the game package
+const gamePath = path.resolve(__dirname, "../../game/dist");
+app.use(express.static(gamePath));
 
 // Handle connections
 io.onConnection((channel: ServerChannel) => {
@@ -128,6 +147,11 @@ io.onConnection((channel: ServerChannel) => {
   });
 });
 
+// Catch-all route to serve the game for any other routes
+app.get("*", (req, res) => {
+  res.sendFile(path.join(gamePath, "index.html"));
+});
+
 // Start the game loop
 function startGameLoop() {
   console.log("Starting game loop");
@@ -195,4 +219,5 @@ function broadcastToAllExcept(message: any, excludeId: string): void {
 // Start the server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`WebRTC UDP ports: 10000-10100`);
 });
