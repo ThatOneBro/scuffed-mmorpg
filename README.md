@@ -14,7 +14,7 @@ This project is set up as a monorepo using npm workspaces and Turborepo:
 
 ### Prerequisites
 
-- Node.js (v18 or higher)
+- Node.js (v20 or higher)
 - npm (v10 or higher)
 
 ### Installation
