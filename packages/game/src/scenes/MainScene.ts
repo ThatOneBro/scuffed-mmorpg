@@ -39,7 +39,6 @@ export class MainScene extends Phaser.Scene {
 
   // Snapshot interpolation
   private SI: SnapshotInterpolation;
-  private serverTimeOffset = 0;
 
   constructor() {
     super({ key: "MainScene" });
