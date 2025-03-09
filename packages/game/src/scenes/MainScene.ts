@@ -1,4 +1,5 @@
-import geckos, { ClientChannel } from "@geckos.io/client";
+import geckos from "@geckos.io/client";
+import { SnapshotInterpolation } from "@geckos.io/snapshot-interpolation";
 import { MessageType, Position } from "@scuffed-mmorpg/common";
 import * as Phaser from "phaser";
 
@@ -9,22 +10,40 @@ interface OtherPlayerObject {
   currentPosition: Position;
 }
 
+// Define a type for the player state in snapshots
+interface PlayerState {
+  id: string;
+  x: number | string;
+  y: number | string;
+  name?: string;
+  [key: string]: any;
+}
+
 export class MainScene extends Phaser.Scene {
   private player: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody | null =
     null;
   private otherPlayers: Map<string, OtherPlayerObject> = new Map();
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | null = null;
   private playerSpeed = 200;
-  private channel: ClientChannel | null = null;
+  private channel: any = null;
   private playerId: string = "";
+  private playerName: string = "";
   private lastPosition: Position = { x: 0, y: 0 };
-  private positionUpdateInterval: number | null = null;
   private connectionStatusElement: HTMLElement | null = null;
   private playerCountElement: HTMLElement | null = null;
-  private lerpFactor = 0.2; // Adjust this value to control lerp speed (0.1 = slow, 0.5 = medium, 1.0 = instant)
+  private usernameInput: HTMLInputElement | null = null;
+  private playerInitialized: boolean = false;
+  private inputFocused: boolean = false;
+
+  // Snapshot interpolation
+  private SI: SnapshotInterpolation;
+  private serverTimeOffset = 0;
 
   constructor() {
     super({ key: "MainScene" });
+
+    // Initialize snapshot interpolation with 60 FPS
+    this.SI = new SnapshotInterpolation(60);
   }
 
   preload(): void {
@@ -38,18 +57,6 @@ export class MainScene extends Phaser.Scene {
     // Add background
     this.add.image(400, 300, "background");
 
-    // Create player sprite
-    this.player = this.physics.add.sprite(400, 300, "player");
-    if (this.player) {
-      this.player.setCollideWorldBounds(true);
-
-      // Set up camera to follow player
-      this.cameras.main.startFollow(this.player);
-    }
-
-    // Create a test other player
-    this.addOtherPlayer("test-player-1", 300, 300);
-
     // Set up keyboard input
     this.cursors = this.input.keyboard.createCursorKeys();
 
@@ -58,52 +65,90 @@ export class MainScene extends Phaser.Scene {
 
     // Connect to the server
     this.connectToServer();
+
+    // Set up a timer to send position updates regularly
+    this.time.addEvent({
+      // We want it to stay at 50ms to avoid lag
+      delay: 50, // 50ms = 20 updates per second
+      callback: this.sendPositionUpdate,
+      callbackScope: this,
+      loop: true,
+    });
+
+    // Disable keyboard capture when input is focused
+    this.input.keyboard.disableGlobalCapture();
+
+    // Make sure the canvas doesn't capture pointer events over UI elements
+    const canvas = document.querySelector("canvas");
+    if (canvas) {
+      canvas.style.position = "absolute";
+      canvas.style.zIndex = "1";
+    }
   }
 
-  update(_time: number, delta: number): void {
-    if (!this.player || !this.cursors) return;
+  // Initialize the player after we have a player ID from the server
+  private initializePlayer(): void {
+    if (this.playerInitialized) return;
 
-    // Handle player movement
-    const velocity = new Phaser.Math.Vector2(0, 0);
+    // Create player sprite
+    this.player = this.physics.add.sprite(400, 300, "player");
+    if (this.player) {
+      this.player.setCollideWorldBounds(true);
 
-    if (this.cursors.left.isDown) {
-      velocity.x = -this.playerSpeed;
-    } else if (this.cursors.right.isDown) {
-      velocity.x = this.playerSpeed;
-    }
+      // Set up camera to follow player
+      this.cameras.main.startFollow(this.player);
 
-    if (this.cursors.up.isDown) {
-      velocity.y = -this.playerSpeed;
-    } else if (this.cursors.down.isDown) {
-      velocity.y = this.playerSpeed;
-    }
-
-    // Normalize and scale the velocity so that player can't move faster diagonally
-    if (velocity.x !== 0 || velocity.y !== 0) {
-      velocity.normalize().scale(this.playerSpeed);
-    }
-
-    this.player.setVelocity(velocity.x, velocity.y);
-
-    // Update current position for sending to server
-    if (
-      this.player.x !== this.lastPosition.x ||
-      this.player.y !== this.lastPosition.y
-    ) {
+      // Set initial position
       this.lastPosition = {
         x: this.player.x,
         y: this.player.y,
       };
+
+      // Set default player name
+      this.playerName = `Player ${this.playerId.substring(0, 5)}`;
+      if (this.usernameInput) {
+        this.usernameInput.value = this.playerName;
+      }
+
+      this.playerInitialized = true;
+    }
+  }
+
+  update(): void {
+    if (!this.player || !this.cursors) return;
+
+    // Skip player movement if input is focused
+    if (!this.inputFocused) {
+      // Reset velocity
+      this.player.setVelocity(0);
+
+      // Handle movement with cursor keys
+      if (this.cursors.left.isDown) {
+        this.player.setVelocityX(-this.playerSpeed);
+      } else if (this.cursors.right.isDown) {
+        this.player.setVelocityX(this.playerSpeed);
+      }
+
+      if (this.cursors.up.isDown) {
+        this.player.setVelocityY(-this.playerSpeed);
+      } else if (this.cursors.down.isDown) {
+        this.player.setVelocityY(this.playerSpeed);
+      }
+
+      // Update last position if player has moved
+      if (
+        this.player.x !== this.lastPosition.x ||
+        this.player.y !== this.lastPosition.y
+      ) {
+        this.lastPosition = {
+          x: this.player.x,
+          y: this.player.y,
+        };
+      }
     }
 
-    // Update other players with lerping
-    this.otherPlayers.forEach((playerObj) => {
-      // Apply lerping to position
-      this.lerpPlayerPosition(playerObj, delta);
-
-      // Update label position to follow sprite
-      playerObj.label.setPosition(playerObj.sprite.x, playerObj.sprite.y - 20);
-    });
+    // Process snapshot interpolation for other players
+    this.processSnapshots();
 
     // Update player count
     if (this.playerCountElement) {
@@ -111,30 +156,89 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  // Lerp the player position smoothly
-  private lerpPlayerPosition(
-    playerObj: OtherPlayerObject,
-    delta: number
-  ): void {
-    // Calculate the lerp amount based on delta time for consistent speed regardless of frame rate
-    const lerpAmount = Math.min(1, this.lerpFactor * (delta / 16.667)); // Normalize to 60fps
+  // Process snapshots for interpolation
+  private processSnapshots(): void {
+    // Get the interpolated snapshot
+    const snapshot = this.SI.calcInterpolation("x y");
 
-    // Apply lerp to x and y coordinates
-    playerObj.currentPosition.x = Phaser.Math.Linear(
-      playerObj.currentPosition.x,
-      playerObj.targetPosition.x,
-      lerpAmount
-    );
+    if (!snapshot) return;
 
-    playerObj.currentPosition.y = Phaser.Math.Linear(
-      playerObj.currentPosition.y,
-      playerObj.targetPosition.y,
-      lerpAmount
-    );
+    // Update player positions based on the snapshot
+    const state = snapshot.state;
 
-    // Update sprite position
-    playerObj.sprite.x = playerObj.currentPosition.x;
-    playerObj.sprite.y = playerObj.currentPosition.y;
+    // Create a map of player IDs to track which players are in the current snapshot
+    const currentPlayerIds = new Set<string>();
+
+    // Process each player in the snapshot
+    for (let i = 0; i < state.length; i++) {
+      const playerState = state[i] as PlayerState;
+      const id = playerState.id;
+
+      // Skip our own player - we handle our own movement locally
+      if (id === this.playerId) {
+        currentPlayerIds.add(id);
+        continue;
+      }
+
+      // Add this player ID to our tracking set
+      currentPlayerIds.add(id);
+
+      // Check if we have this player
+      let playerObj = this.otherPlayers.get(id);
+
+      if (!playerObj) {
+        // Create a new player if we don't have it
+        // Make sure to convert string values to numbers
+        const posX = this.ensureNumber(playerState.x);
+        const posY = this.ensureNumber(playerState.y);
+
+        if (posX !== null && posY !== null) {
+          // Use the player's name from the state if available
+          const playerName = playerState.name || `Player ${id.substring(0, 5)}`;
+          this.addOtherPlayer(id, posX, posY, playerName);
+          playerObj = this.otherPlayers.get(id);
+          if (!playerObj) continue;
+        } else {
+          continue; // Skip this player if we can't get valid coordinates
+        }
+      } else if (playerState.name && playerObj.label) {
+        // Update the player's name if it has changed
+        playerObj.label.setText(playerState.name);
+      }
+
+      // Update the player's position
+      // Make sure to convert string values to numbers
+      const posX = this.ensureNumber(playerState.x);
+      const posY = this.ensureNumber(playerState.y);
+
+      if (posX !== null && posY !== null) {
+        playerObj.sprite.x = posX;
+        playerObj.sprite.y = posY;
+
+        // Update the label position
+        playerObj.label.setPosition(posX, posY - 20);
+      }
+    }
+
+    // Remove players that are no longer in the snapshot
+    for (const [id, playerObj] of this.otherPlayers.entries()) {
+      if (!currentPlayerIds.has(id) && id !== this.playerId) {
+        playerObj.sprite.destroy();
+        playerObj.label.destroy();
+        this.otherPlayers.delete(id);
+      }
+    }
+  }
+
+  // Helper method to ensure a value is a number
+  private ensureNumber(value: any): number | null {
+    if (typeof value === "number") {
+      return value;
+    } else if (typeof value === "string") {
+      const parsed = parseFloat(value);
+      return isNaN(parsed) ? null : parsed;
+    }
+    return null;
   }
 
   private createUI(): void {
@@ -144,6 +248,18 @@ export class MainScene extends Phaser.Scene {
     // Create UI container
     const uiContainer = document.createElement("div");
     uiContainer.className = "ui-overlay";
+
+    // Style the UI container to be above the canvas
+    uiContainer.style.position = "absolute";
+    uiContainer.style.top = "10px";
+    uiContainer.style.left = "10px";
+    uiContainer.style.zIndex = "1000";
+    uiContainer.style.pointerEvents = "auto";
+    uiContainer.style.backgroundColor = "rgba(0, 0, 0, 0.7)";
+    uiContainer.style.padding = "10px";
+    uiContainer.style.borderRadius = "5px";
+    uiContainer.style.width = "200px";
+
     appElement.appendChild(uiContainer);
 
     // Add controls info
@@ -162,19 +278,132 @@ export class MainScene extends Phaser.Scene {
     // Add player count
     this.playerCountElement = document.createElement("div");
     this.playerCountElement.textContent = "Players: 1";
+    this.playerCountElement.style.marginBottom = "10px";
     uiContainer.appendChild(this.playerCountElement);
+
+    // Add username input
+    const usernameLabel = document.createElement("label");
+    usernameLabel.textContent = "Username: ";
+    usernameLabel.style.display = "block";
+    usernameLabel.style.marginBottom = "5px";
+    uiContainer.appendChild(usernameLabel);
+
+    this.usernameInput = document.createElement("input");
+    this.usernameInput.type = "text";
+    this.usernameInput.placeholder = "Enter your name";
+    this.usernameInput.style.width = "100%";
+    this.usernameInput.style.padding = "5px";
+    this.usernameInput.style.marginBottom = "10px";
+    this.usernameInput.style.boxSizing = "border-box";
+    this.usernameInput.style.backgroundColor = "#333";
+    this.usernameInput.style.color = "#fff";
+    this.usernameInput.style.border = "1px solid #555";
+    this.usernameInput.style.borderRadius = "3px";
+    this.usernameInput.style.zIndex = "1001";
+    this.usernameInput.style.position = "relative";
+    this.usernameInput.style.pointerEvents = "auto";
+
+    // Add event listeners for focus and blur
+    this.usernameInput.addEventListener("focus", () => {
+      this.inputFocused = true;
+      // Stop player movement when input is focused
+      if (this.player) {
+        this.player.setVelocity(0);
+      }
+    });
+
+    this.usernameInput.addEventListener("blur", () => {
+      this.inputFocused = false;
+    });
+
+    // Add event listener for name changes
+    this.usernameInput.addEventListener(
+      "change",
+      this.handleNameChange.bind(this)
+    );
+
+    // Add event listener for Enter key to blur the input
+    this.usernameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        this.usernameInput?.blur();
+      }
+    });
+
+    uiContainer.appendChild(this.usernameInput);
+
+    // Add a button to update the name (for mobile users)
+    const updateButton = document.createElement("button");
+    updateButton.textContent = "Update Name";
+    updateButton.style.width = "100%";
+    updateButton.style.padding = "5px";
+    updateButton.style.backgroundColor = "#4a4a9c";
+    updateButton.style.color = "#fff";
+    updateButton.style.border = "none";
+    updateButton.style.borderRadius = "3px";
+    updateButton.style.cursor = "pointer";
+    updateButton.style.marginTop = "5px";
+    updateButton.style.zIndex = "1001";
+    updateButton.style.position = "relative";
+    updateButton.style.pointerEvents = "auto";
+
+    updateButton.addEventListener("click", () => {
+      if (this.usernameInput) {
+        this.handleNameChange({
+          target: this.usernameInput,
+        } as unknown as Event);
+        this.usernameInput.blur();
+      }
+    });
+
+    uiContainer.appendChild(updateButton);
+
+    // Make sure the UI is clickable
+    document.addEventListener("DOMContentLoaded", () => {
+      // Ensure the canvas doesn't block UI interactions
+      const canvasElements = document.querySelectorAll("canvas");
+      canvasElements.forEach((canvas) => {
+        canvas.style.position = "absolute";
+        canvas.style.zIndex = "1";
+      });
+    });
+  }
+
+  // Handle username changes
+  private handleNameChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const newName = input.value.trim();
+
+    if (newName && newName !== this.playerName) {
+      this.playerName = newName;
+
+      // Send name update to server
+      if (this.channel) {
+        this.channel.emit("updateName", { name: this.playerName });
+      }
+    }
   }
 
   // Helper method to add other players to the scene
-  private addOtherPlayer(id: string, x: number, y: number): void {
-    console.log(`Adding other player: ${id} at position (${x}, ${y})`);
+  private addOtherPlayer(
+    id: string,
+    x: number,
+    y: number,
+    name: string = ""
+  ): void {
+    // Skip if this is our own player ID or if the player already exists
+    if (id === this.playerId || this.otherPlayers.has(id)) {
+      return;
+    }
 
     // Create the sprite for the other player
     const sprite = this.add.sprite(x, y, "otherPlayer");
 
-    // Add a text label with the player ID
+    // Use the provided name or a default based on ID
+    const displayName = name || `Player ${id.substring(0, 5)}`;
+
+    // Add a text label with the player name
     const label = this.add
-      .text(x, y - 20, id.substring(0, 5), {
+      .text(x, y - 20, displayName, {
         fontSize: "12px",
         color: "#ffffff",
         backgroundColor: "#000000",
@@ -197,7 +426,7 @@ export class MainScene extends Phaser.Scene {
     this.channel = geckos({ port: 3001 });
 
     // Handle connection
-    this.channel.onConnect((error) => {
+    this.channel.onConnect((error: any) => {
       if (error) {
         console.error("Connection error:", error);
         if (this.connectionStatusElement) {
@@ -208,47 +437,49 @@ export class MainScene extends Phaser.Scene {
         return;
       }
 
-      console.log("Connected to server with ID:", this.channel?.id);
       this.playerId = this.channel?.id || "";
+
+      // Initialize player now that we have an ID
+      this.initializePlayer();
 
       // Update connection status
       if (this.connectionStatusElement) {
         this.connectionStatusElement.textContent = "Connected";
         this.connectionStatusElement.style.color = "#00ff00";
       }
-
-      // Set up interval to send position updates to the server
-      this.positionUpdateInterval = window.setInterval(() => {
-        this.sendPositionUpdate();
-      }, 100); // Send position updates every 100ms
     });
 
     // Handle disconnection
     this.channel.onDisconnect(() => {
-      console.log("Disconnected from server");
-
       // Update connection status
       if (this.connectionStatusElement) {
         this.connectionStatusElement.textContent =
           "Disconnected - Trying to reconnect...";
         this.connectionStatusElement.style.color = "#ff0000";
       }
-
-      if (this.positionUpdateInterval) {
-        clearInterval(this.positionUpdateInterval);
-        this.positionUpdateInterval = null;
-      }
     });
 
     // Handle messages from the server
     this.channel.on("message", (message: any) => {
-      this.handleServerMessage(message);
+      if (!message) return;
+
+      if (message.type === "snapshot") {
+        // Process snapshot data
+        const snapshot = message.payload;
+        this.SI.snapshot.add(snapshot);
+      } else {
+        // Handle other message types
+        this.handleServerMessage(message);
+      }
     });
   }
 
   private sendPositionUpdate(): void {
-    if (this.channel && this.player) {
-      this.channel.emit("move", this.lastPosition);
+    if (this.channel && this.player && this.playerInitialized) {
+      this.channel.emit("move", {
+        ...this.lastPosition,
+        name: this.playerName,
+      });
     }
   }
 
@@ -264,10 +495,6 @@ export class MainScene extends Phaser.Scene {
         this.handlePlayerLeave(message.payload);
         break;
 
-      case MessageType.PLAYER_MOVE:
-        this.handlePlayerMove(message.payload);
-        break;
-
       case MessageType.GAME_STATE:
         this.handleGameState(message.payload);
         break;
@@ -280,13 +507,16 @@ export class MainScene extends Phaser.Scene {
   private handlePlayerJoin(payload: any): void {
     if (payload.id === this.playerId) return; // Don't add ourselves
 
-    console.log("Player joined:", payload);
-    this.addOtherPlayer(payload.id, payload.position.x, payload.position.y);
+    this.addOtherPlayer(
+      payload.id,
+      payload.position.x,
+      payload.position.y,
+      payload.name
+    );
   }
 
   private handlePlayerLeave(payload: any): void {
     const { playerId } = payload;
-    console.log("Player left:", playerId);
 
     // Remove the player sprite and label
     const playerObj = this.otherPlayers.get(playerId);
@@ -297,25 +527,18 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  private handlePlayerMove(payload: any): void {
-    const { playerId, position } = payload;
-    if (playerId === this.playerId) return; // Don't move ourselves
-
-    // Update the player's target position for lerping
-    const playerObj = this.otherPlayers.get(playerId);
-    if (playerObj) {
-      playerObj.targetPosition = { ...position };
-    }
-  }
-
   private handleGameState(payload: any): void {
     const { players } = payload;
-    console.log("Received game state:", players);
 
     // Add all existing players
     Object.values(players).forEach((player: any) => {
       if (player.id !== this.playerId && !this.otherPlayers.has(player.id)) {
-        this.addOtherPlayer(player.id, player.position.x, player.position.y);
+        this.addOtherPlayer(
+          player.id,
+          player.position.x,
+          player.position.y,
+          player.name
+        );
       }
     });
   }

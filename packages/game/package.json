@@ -13,6 +13,7 @@
   "dependencies": {
     "@scuffed-mmorpg/common": "*",
     "@geckos.io/client": "3.0.1",
+    "@geckos.io/snapshot-interpolation": "^1.1.0",
     "phaser": "^3.60.0"
   },
   "devDependencies": {

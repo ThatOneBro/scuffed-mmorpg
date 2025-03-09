@@ -1,4 +1,5 @@
 import geckos, { Data, GeckosServer, ServerChannel } from "@geckos.io/server";
+import { SnapshotInterpolation } from "@geckos.io/snapshot-interpolation";
 import {
   MessageType,
   Player,
@@ -19,11 +20,19 @@ io.addServer(server);
 
 const PORT = process.env.PORT || 3001;
 
+// Initialize the snapshot interpolation
+const SI = new SnapshotInterpolation(60); // 60 FPS server tick rate
+
 // Store connected players
 const players: Record<string, Player> = {};
 
 // Store all channels for direct access
 const channels: Map<string, ServerChannel> = new Map();
+
+// Game loop variables
+const TICK_RATE = 20; // Send updates 20 times per second
+let tick = 0;
+let gameLoopInterval: NodeJS.Timeout | null = null;
 
 // Handle connections
 io.onConnection((channel: ServerChannel) => {
@@ -60,26 +69,42 @@ io.onConnection((channel: ServerChannel) => {
   // Send current game state to the new player
   channel.emit("message", createMessage(MessageType.GAME_STATE, { players }));
 
+  // Start the game loop if it's not already running
+  if (!gameLoopInterval && Object.keys(players).length > 0) {
+    startGameLoop();
+  }
+
   // Handle player movement
   channel.on("move", (data: Data) => {
     // Validate and convert the data to Position
     if (!data || typeof data !== "object") return;
 
-    const position = data as Position;
+    const position = data as Position & { name?: string };
     if (typeof position.x !== "number" || typeof position.y !== "number")
       return;
 
     if (players[playerId]) {
-      players[playerId].position = position;
+      // Update the player's position
+      players[playerId].position = { x: position.x, y: position.y };
 
-      // Create the message to broadcast
-      const message = createMessage(MessageType.PLAYER_MOVE, {
-        playerId,
-        position,
-      });
+      // Update the player's name if provided
+      if (position.name && typeof position.name === "string") {
+        players[playerId].name = position.name;
+      }
+    }
+  });
 
-      // Broadcast to all except the sender
-      broadcastToAllExcept(message, playerId);
+  // Handle player name updates
+  channel.on("updateName", (data: Data) => {
+    if (!data || typeof data !== "object") return;
+
+    const nameData = data as { name: string };
+    if (!nameData.name || typeof nameData.name !== "string") return;
+
+    if (players[playerId]) {
+      // Update the player's name
+      players[playerId].name = nameData.name;
+      console.log(`Player ${playerId} changed name to: ${nameData.name}`);
     }
   });
 
@@ -95,8 +120,61 @@ io.onConnection((channel: ServerChannel) => {
 
     // Broadcast player left message to all clients
     broadcastToAll(createMessage(MessageType.PLAYER_LEAVE, { playerId }));
+
+    // Stop the game loop if no players are left
+    if (Object.keys(players).length === 0 && gameLoopInterval) {
+      stopGameLoop();
+    }
   });
 });
+
+// Start the game loop
+function startGameLoop() {
+  console.log("Starting game loop");
+  gameLoopInterval = setInterval(() => {
+    // Create a snapshot of the current game state
+    const snapshot = createSnapshot();
+
+    // Broadcast the snapshot to all clients
+    if (snapshot) {
+      broadcastToAll({
+        type: "snapshot",
+        payload: snapshot,
+      });
+    }
+
+    tick++;
+  }, 1000 / TICK_RATE);
+}
+
+// Stop the game loop
+function stopGameLoop() {
+  console.log("Stopping game loop");
+  if (gameLoopInterval) {
+    clearInterval(gameLoopInterval);
+    gameLoopInterval = null;
+  }
+}
+
+// Create a snapshot of the current game state
+function createSnapshot() {
+  // Convert players to an array format expected by the snapshot interpolation library
+  const playerArray = [];
+
+  for (const id in players) {
+    const player = players[id];
+    playerArray.push({
+      id,
+      x: player.position.x,
+      y: player.position.y,
+      name: player.name,
+      // Add any other properties needed for interpolation
+    });
+  }
+
+  // Create the snapshot with the array of players
+  return playerArray.length > 0 ? SI.snapshot.create(playerArray) : null;
+}
 
 // Helper function to broadcast to all connected clients
 function broadcastToAll(message: any): void {
