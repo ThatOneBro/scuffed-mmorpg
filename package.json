@@ -17,7 +17,12 @@
     "turbo": "^1.10.16"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
+  },
+  "overrides": {
+    "@geckos.io/server": {
+      "node-datachannel": "0.26.0"
+    }
   },
   "packageManager": "npm@10.2.3"
 }

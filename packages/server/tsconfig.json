@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "es2018",
-    "module": "commonjs",
-    "lib": ["es2018", "dom"],
+    "target": "es2020",
+    "module": "ESNext",
+    "lib": ["es2020", "dom"],
     "declaration": true,
     "outDir": "./dist",
     "rootDir": "./src",
@@ -12,6 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "composite": true,
+    "moduleResolution": "node",
     "paths": {
       "@scuffed-mmorpg/common": ["../common/src"]
     }

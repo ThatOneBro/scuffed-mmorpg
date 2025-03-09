@@ -1,6 +1,6 @@
+import geckos, { ClientChannel } from "@geckos.io/client";
 import { MessageType, Position } from "@scuffed-mmorpg/common";
 import * as Phaser from "phaser";
-import { io, Socket } from "socket.io-client";
 
 interface OtherPlayerObject {
   sprite: Phaser.GameObjects.Sprite;
@@ -15,7 +15,7 @@ export class MainScene extends Phaser.Scene {
   private otherPlayers: Map<string, OtherPlayerObject> = new Map();
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | null = null;
   private playerSpeed = 200;
-  private socket: Socket | null = null;
+  private channel: ClientChannel | null = null;
   private playerId: string = "";
   private lastPosition: Position = { x: 0, y: 0 };
   private positionUpdateInterval: number | null = null;
@@ -60,7 +60,7 @@ export class MainScene extends Phaser.Scene {
     this.connectToServer();
   }
 
-  update(time: number, delta: number): void {
+  update(_time: number, delta: number): void {
     if (!this.player || !this.cursors) return;
 
     // Handle player movement
@@ -193,13 +193,23 @@ export class MainScene extends Phaser.Scene {
   }
 
   private connectToServer(): void {
-    // Connect to the Socket.IO server
-    this.socket = io("http://localhost:3001");
+    // Connect to the geckos.io server
+    this.channel = geckos({ port: 3001 });
 
     // Handle connection
-    this.socket.on("connect", () => {
-      console.log("Connected to server with ID:", this.socket.id);
-      this.playerId = this.socket.id;
+    this.channel.onConnect((error) => {
+      if (error) {
+        console.error("Connection error:", error);
+        if (this.connectionStatusElement) {
+          this.connectionStatusElement.textContent =
+            "Connection error - Trying to reconnect...";
+          this.connectionStatusElement.style.color = "#ff0000";
+        }
+        return;
+      }
+
+      console.log("Connected to server with ID:", this.channel?.id);
+      this.playerId = this.channel?.id || "";
 
       // Update connection status
       if (this.connectionStatusElement) {
@@ -214,7 +224,7 @@ export class MainScene extends Phaser.Scene {
     });
 
     // Handle disconnection
-    this.socket.on("disconnect", () => {
+    this.channel.onDisconnect(() => {
       console.log("Disconnected from server");
 
       // Update connection status
@@ -230,27 +240,15 @@ export class MainScene extends Phaser.Scene {
       }
     });
 
-    // Handle connection error
-    this.socket.on("connect_error", (error: Error) => {
-      console.error("Connection error:", error);
-
-      // Update connection status
-      if (this.connectionStatusElement) {
-        this.connectionStatusElement.textContent =
-          "Connection error - Trying to reconnect...";
-        this.connectionStatusElement.style.color = "#ff0000";
-      }
-    });
-
     // Handle messages from the server
-    this.socket.on("message", (message: any) => {
+    this.channel.on("message", (message: any) => {
       this.handleServerMessage(message);
     });
   }
 
   private sendPositionUpdate(): void {
-    if (this.socket && this.player) {
-      this.socket.emit("move", this.lastPosition);
+    if (this.channel && this.player) {
+      this.channel.emit("move", this.lastPosition);
     }
   }
 
