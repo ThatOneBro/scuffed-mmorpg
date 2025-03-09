@@ -5,6 +5,8 @@ import { io, Socket } from "socket.io-client";
 interface OtherPlayerObject {
   sprite: Phaser.GameObjects.Sprite;
   label: Phaser.GameObjects.Text;
+  targetPosition: Position;
+  currentPosition: Position;
 }
 
 export class MainScene extends Phaser.Scene {
@@ -19,6 +21,7 @@ export class MainScene extends Phaser.Scene {
   private positionUpdateInterval: number | null = null;
   private connectionStatusElement: HTMLElement | null = null;
   private playerCountElement: HTMLElement | null = null;
+  private lerpFactor = 0.2; // Adjust this value to control lerp speed (0.1 = slow, 0.5 = medium, 1.0 = instant)
 
   constructor() {
     super({ key: "MainScene" });
@@ -57,7 +60,7 @@ export class MainScene extends Phaser.Scene {
     this.connectToServer();
   }
 
-  update(): void {
+  update(time: number, delta: number): void {
     if (!this.player || !this.cursors) return;
 
     // Handle player movement
@@ -93,8 +96,12 @@ export class MainScene extends Phaser.Scene {
       };
     }
 
-    // Update other player labels to follow their sprites
+    // Update other players with lerping
     this.otherPlayers.forEach((playerObj) => {
+      // Apply lerping to position
+      this.lerpPlayerPosition(playerObj, delta);
+
+      // Update label position to follow sprite
       playerObj.label.setPosition(playerObj.sprite.x, playerObj.sprite.y - 20);
     });
 
@@ -102,6 +109,32 @@ export class MainScene extends Phaser.Scene {
     if (this.playerCountElement) {
       this.playerCountElement.textContent = `Players: ${this.otherPlayers.size + 1}`;
     }
+  }
+
+  // Lerp the player position smoothly
+  private lerpPlayerPosition(
+    playerObj: OtherPlayerObject,
+    delta: number
+  ): void {
+    // Calculate the lerp amount based on delta time for consistent speed regardless of frame rate
+    const lerpAmount = Math.min(1, this.lerpFactor * (delta / 16.667)); // Normalize to 60fps
+
+    // Apply lerp to x and y coordinates
+    playerObj.currentPosition.x = Phaser.Math.Linear(
+      playerObj.currentPosition.x,
+      playerObj.targetPosition.x,
+      lerpAmount
+    );
+
+    playerObj.currentPosition.y = Phaser.Math.Linear(
+      playerObj.currentPosition.y,
+      playerObj.targetPosition.y,
+      lerpAmount
+    );
+
+    // Update sprite position
+    playerObj.sprite.x = playerObj.currentPosition.x;
+    playerObj.sprite.y = playerObj.currentPosition.y;
   }
 
   private createUI(): void {
@@ -149,8 +182,14 @@ export class MainScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0.5);
 
-    // Store the sprite and label in our map
-    this.otherPlayers.set(id, { sprite, label });
+    // Store the sprite and label in our map with initial positions
+    const initialPosition = { x, y };
+    this.otherPlayers.set(id, {
+      sprite,
+      label,
+      targetPosition: { ...initialPosition },
+      currentPosition: { ...initialPosition },
+    });
   }
 
   private connectToServer(): void {
@@ -264,12 +303,10 @@ export class MainScene extends Phaser.Scene {
     const { playerId, position } = payload;
     if (playerId === this.playerId) return; // Don't move ourselves
 
-    // Update the player's position
+    // Update the player's target position for lerping
     const playerObj = this.otherPlayers.get(playerId);
     if (playerObj) {
-      playerObj.sprite.x = position.x;
-      playerObj.sprite.y = position.y;
-      // Label position is updated in the update method
+      playerObj.targetPosition = { ...position };
     }
   }
 
