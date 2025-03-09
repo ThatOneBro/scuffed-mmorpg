@@ -424,14 +424,14 @@ export class MainScene extends Phaser.Scene {
 
   private connectToServer(): void {
     // Get the server URL based on the current hostname
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const protocol = window.location.protocol;
     const host = window.location.hostname;
     const port =
       process.env.NODE_ENV === "production" ? window.location.port : "3001";
 
     // Connect to the geckos.io server with WebRTC configuration
     this.channel = geckos({
-      url: `${protocol}//${host}${port ? ":" + port : ""}`,
+      url: `${protocol}//${host}`,
       port: parseInt(port || "3001"),
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
