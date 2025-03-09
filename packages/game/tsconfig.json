@@ -11,12 +11,16 @@
     "isolatedModules": true,
     "noEmit": true,
     "strict": true,
+    "strictNullChecks": false,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
     "paths": {
+      "@/*": ["./src/*"],
       "@scuffed-mmorpg/common": ["../common/src"]
     }
   },
-  "include": ["src"]
-} 
+  "include": ["src"],
+  "references": [{ "path": "../common" }]
+}

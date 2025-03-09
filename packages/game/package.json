@@ -2,15 +2,18 @@
   "name": "@scuffed-mmorpg/game",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "build": "tsc",
     "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
     "lint": "eslint \"src/**/*.ts*\"",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@scuffed-mmorpg/common": "*",
-    "phaser": "^3.60.0"
+    "phaser": "^3.60.0",
+    "socket.io-client": "^4.7.2"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
