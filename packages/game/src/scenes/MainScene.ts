@@ -426,23 +426,44 @@ export class MainScene extends Phaser.Scene {
     // Get the server URL based on the current hostname
     const protocol = window.location.protocol;
     const host = window.location.hostname;
-    const port =
-      process.env.NODE_ENV === "production" ? window.location.port : "3001";
+
+    // In development, we're using a proxy in vite.config.ts, so we don't need to specify a port
+    // In production, we use the same port for both client and server
+    const isDev = import.meta.env.MODE === "development";
+    const serverPort = isDev
+      ? window.location.port
+      : import.meta.env.SERVER_PORT || "3001";
+
+    console.log(`Connecting to server at ${protocol}//${host}:${serverPort}`);
+    console.log(`Environment: ${import.meta.env.MODE || "development"}`);
+    console.log(`Using development proxy: ${isDev}`);
 
     // Connect to the geckos.io server with WebRTC configuration
     this.channel = geckos({
-      url: `${protocol}//${host}`,
-      port: parseInt(port || "3001"),
+      url: `${protocol}//${host}`, // In dev mode, use the current origin with proxy
+      port: parseInt(serverPort), // In dev mode, use the current port with proxy
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
       ],
     });
+
+    console.log("Geckos channel created, waiting for connection...");
+    console.log(
+      "WebRTC signaling endpoint should be at: /.wrtc/v2/connections"
+    );
 
     // Handle connection
     this.channel.onConnect((error: any) => {
       if (error) {
         console.error("Connection error:", error);
+        console.error(
+          "Connection error details:",
+          JSON.stringify(error, null, 2)
+        );
         if (this.connectionStatusElement) {
           this.connectionStatusElement.textContent =
             "Connection error - Trying to reconnect...";
@@ -460,6 +481,16 @@ export class MainScene extends Phaser.Scene {
             `Retrying connection in ${delay}ms (attempt ${this.connectionAttempts}/${this.maxConnectionAttempts})`
           );
           setTimeout(() => this.connectToServer(), delay);
+        } else {
+          console.error(
+            "Max connection attempts reached. Please check server status and network configuration."
+          );
+
+          // Show a more user-friendly error message
+          if (this.connectionStatusElement) {
+            this.connectionStatusElement.textContent =
+              "Unable to connect to server. Please refresh the page or try again later.";
+          }
         }
         return;
       }
@@ -468,6 +499,7 @@ export class MainScene extends Phaser.Scene {
       this.connectionAttempts = 0;
 
       this.playerId = this.channel?.id || "";
+      console.log(`Connected successfully! Player ID: ${this.playerId}`);
 
       // Initialize player now that we have an ID
       this.initializePlayer();
@@ -479,8 +511,20 @@ export class MainScene extends Phaser.Scene {
       }
     });
 
+    // Add event listener for ICE connection state changes
+    if (this.channel.rtcPeerConnection) {
+      this.channel.rtcPeerConnection.addEventListener(
+        "iceconnectionstatechange",
+        () => {
+          const state = this.channel.rtcPeerConnection?.iceConnectionState;
+          console.log(`ICE connection state changed: ${state}`);
+        }
+      );
+    }
+
     // Handle disconnection
     this.channel.onDisconnect(() => {
+      console.log("Disconnected from server");
       // Update connection status
       if (this.connectionStatusElement) {
         this.connectionStatusElement.textContent =

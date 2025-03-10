@@ -23,17 +23,40 @@ const io: GeckosServer = geckos({
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
+    // Add more STUN servers for redundancy
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
   ],
   portRange: {
     min: 10000,
     max: 10100,
   },
+  cors: {
+    origin: "*", // Allow connections from any origin
+    allowAuthorization: true,
+  },
+  authorization: async (auth, request) => {
+    // Log connection attempts for debugging
+    console.log(
+      `Connection attempt from: ${request.headers.origin || "unknown origin"}`
+    );
+    return true; // Allow all connections
+  },
 });
 
-// Attach to the http server
+// Log server information
+console.log("Geckos.io server initialized");
+
+// IMPORTANT: Attach geckos.io to the http server BEFORE defining any routes
 io.addServer(server);
 
 const PORT = process.env.PORT || 3001;
+
+// Log the environment
+console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+console.log(`Running on port: ${PORT}`);
+console.log(`WebRTC signaling endpoint: /.wrtc/v2/connections`);
 
 // Initialize the snapshot interpolation
 const SI = new SnapshotInterpolation(60); // 60 FPS server tick rate
@@ -52,6 +75,15 @@ let gameLoopInterval: NodeJS.Timeout | null = null;
 // Serve static files from the game package
 const gamePath = path.resolve(__dirname, "../../game/dist");
 app.use(express.static(gamePath));
+
+// Make sure the server can handle JSON requests (needed for WebRTC signaling)
+app.use(express.json());
+
+// Log all incoming requests for debugging
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
 
 // Handle connections
 io.onConnection((channel: ServerChannel) => {
@@ -148,7 +180,7 @@ io.onConnection((channel: ServerChannel) => {
 });
 
 // Catch-all route to serve the game for any other routes
-app.get("*", (req, res) => {
+app.get("/", (req, res) => {
   res.sendFile(path.join(gamePath, "index.html"));
 });
 
@@ -207,17 +239,9 @@ function broadcastToAll(message: any): void {
   }
 }
 
-// Helper function to broadcast to all except one client
-function broadcastToAllExcept(message: any, excludeId: string): void {
-  for (const [id, channel] of channels.entries()) {
-    if (id !== excludeId) {
-      channel.emit("message", message);
-    }
-  }
-}
-
 // Start the server
 server.listen(PORT, () => {
+  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`Server running on port ${PORT}`);
   console.log(`WebRTC UDP ports: 10000-10100`);
 });
