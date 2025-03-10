@@ -8,7 +8,7 @@ This project is set up as a monorepo using npm workspaces and Turborepo:
 
 - `packages/common`: Shared types, interfaces, and utilities
 - `packages/game`: The game client built with Phaser
-- `packages/server`: The game server built with Express and Socket.IO
+- `packages/server`: The game server built with Express and Geckos.io
 
 ## Getting Started
 
