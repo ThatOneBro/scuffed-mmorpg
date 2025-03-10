@@ -430,9 +430,7 @@ export class MainScene extends Phaser.Scene {
     // In development, we're using a proxy in vite.config.ts, so we don't need to specify a port
     // In production, we use the same port for both client and server
     const isDev = import.meta.env.MODE === "development";
-    const serverPort = isDev
-      ? window.location.port
-      : import.meta.env.SERVER_PORT || "3001";
+    const serverPort = window.location.port;
 
     console.log(`Connecting to server at ${protocol}//${host}:${serverPort}`);
     console.log(`Environment: ${import.meta.env.MODE || "development"}`);
